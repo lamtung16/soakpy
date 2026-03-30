@@ -1,10 +1,10 @@
-# src/soak_split/core.py
+# src/soakpy/core.py
 
 import numpy as np
 from sklearn.model_selection import KFold
 
 
-def soak_split(subset_vec, n_splits=5, seed=0):
+def split(subset_vec, n_splits=5, seed=0):
     """
     Perform SOAK splitting.
 
