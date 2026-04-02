@@ -190,6 +190,8 @@ class SOAK:
         soak_obj.analyze(model_list=["featureless", "tree"], n_splits=5, n_random_seeds=5, log_target=True)
 
         """
+        self.n_splits = n_splits
+        self.n_random_seeds = n_random_seeds
         X = np.array(self.df.drop(columns=[self.subset_col, self.target_col]).select_dtypes(include=[np.number]))
         y = self.df[self.target_col]
         if log_target:
@@ -212,6 +214,10 @@ class SOAK:
                                 "mae": mae,
                             })
         self.results_df = pd.DataFrame(results)
+        self.results_df = (
+            self.results_df.groupby(["subset", "category", "fold_id", "model", "train_size", "test_size"], as_index=False)[["rmse", "mae"]]
+            .mean()
+        )
 
     @staticmethod
     def model_eval(X_train, y_train, X_test, y_test, model):
@@ -343,7 +349,7 @@ class SOAK:
             ax.xaxis.set_major_formatter(FormatStrFormatter("%.3f"))
             ax.tick_params(axis='x', labelsize=9)
 
-        fig.supxlabel(f"{metric.upper()} (mean ± 2sd) | test subset: {subset_value} | model: {model} | {set(self.results_df['fold_id']).__len__()} test folds | {len(set(self.results_df['seed_id']))-1} downsample random seeds", fontsize=11)
+        fig.supxlabel(f"{metric.upper()} (mean ± 2sd) | test subset: {subset_value} | model: {model} | {self.n_splits} test folds | {self.n_random_seeds} downsample random seeds", fontsize=11)
         fig.tight_layout()
         fig.show()
         return fig

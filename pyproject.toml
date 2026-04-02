@@ -1,6 +1,6 @@
 [project]
 name = "soakpy"
-version = "0.0.5"
+version = "0.0.52"
 description = "SOAK splitting utility"
 authors = [
     { name="Tung Nguyen", email="nguyenlamtung10@gmail.com" }
