@@ -10,7 +10,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import GridSearchCV
 from sklearn.tree import DecisionTreeRegressor
-from scipy.stats import ttest_ind
+from scipy.stats import ttest_rel
 
 def split(subset_vec, n_splits=5, n_random_seeds=5, seed=123):
     """
@@ -30,7 +30,23 @@ def split(subset_vec, n_splits=5, n_random_seeds=5, seed=123):
     Returns
     -------
     list
-        List of [test_subset, category, fold_id, random_seed, train_idx, test_idx]
+        List of tupples, each tupple has the form [test_subset, category, fold_id, random_seed, train_idx, test_idx]
+    
+    Example
+    -------
+    import numpy as np
+    import soakpy
+
+    # --- synthetic data ---
+    X = np.arange(10).reshape(-1, 1)
+    X = np.append(X, [10, 12, 14])
+    y = X.ravel()
+    subset_vec = np.array(['even' if x % 2 == 0 else 'odd' for x in X.ravel()])
+    for subset_value, category, fold_id, random_seed, train_idx_final, test_same_idx in soakpy.split(subset_vec, n_splits=2, n_random_seeds=2):
+        print(f"test subset: {subset_value:6s} --- category: {category:6s} --- test fold: {fold_id}")
+        print(f"y_test : {y[test_same_idx]}")
+        print(f"y_train: {y[train_idx_final]}")
+        print("-"*50)
     """
     
     subset_vec = np.asarray(subset_vec)
@@ -131,29 +147,47 @@ class SOAK:
             Name of subset column for SOAK spliting
         target_col: str
             Name of target column
+        
+        Example
+        -------
+        import soakpy
+        import pandas as pd
 
+        df = pd.read_csv("https://github.com/lamtung16/soak_regression/raw/refs/heads/main/data/WorkersCompensation.csv.xz")
+        soak_obj = soakpy.SOAK(df=df, subset_col="Gender", target_col="UltimateIncurredClaimCost")
+        soak_obj.analyze(model_list=["featureless", "tree"], n_splits=5, n_random_seeds=5, log_target=True)
+        soak_obj.visualize(subset_value='M', model="tree", metric="rmse", figsize=(12, 2.5))
         """
         self.df = df
         self.subset_col = subset_col
         self.target_col = target_col
         self.results_df = None
     
-    def analyze(self, model_list = ["tree"], n_splits=10, n_random_seeds=10, log_target=False, seed=123):
+    def analyze(self, model_list = ["tree"], n_splits=5, n_random_seeds=5, log_target=False, seed=123):
         """
-        SOAK analyze.
+        SOAK analyze, it updates the self.results_df
 
         Parameters
         ----------
-        model_list : list, default = ["featureless", "tree"]
+        model_list : list, default = ["tree"]
             List of train models, subset of ["featureless", "linear", "tree"]
-        n_splits : int, default=10
+        n_splits : int, default=5
             Number of folds for each subset.
-        n_random_seeds: int, default=10
+        n_random_seeds: int, default=5
             Number of random seeds for downsampling
         log_target: boolean, default=False
             Transform target using log or not
         seed : int, default=123
             Random seed for reproducibility.
+        
+        Example
+        -------
+        import soakpy
+        import pandas as pd
+
+        df = pd.read_csv("https://github.com/lamtung16/soak_regression/raw/refs/heads/main/data/WorkersCompensation.csv.xz")
+        soak_obj = soakpy.SOAK(df=df, subset_col="Gender", target_col="UltimateIncurredClaimCost")
+        soak_obj.analyze(model_list=["featureless", "tree"], n_splits=5, n_random_seeds=5, log_target=True)
 
         """
         X = np.array(self.df.drop(columns=[self.subset_col, self.target_col]).select_dtypes(include=[np.number]))
@@ -186,7 +220,7 @@ class SOAK:
 
     def visualize(self, subset_value=None, model=None, metric="rmse", figsize=(15, 3)):
         """
-        SOAK visualize.
+        SOAK visualize. Return a matplotlib figure.
 
         Parameters
         ----------
@@ -198,8 +232,19 @@ class SOAK:
             Metric, it can be either 'rmse' or 'mae'
         figsize: tuple, default=(15, 3)
             Size of figure
+        
+        Example
+        -------
+        import soakpy
+        import pandas as pd
 
+        df = pd.read_csv("https://github.com/lamtung16/soak_regression/raw/refs/heads/main/data/WorkersCompensation.csv.xz")
+        soak_obj = soakpy.SOAK(df=df, subset_col="Gender", target_col="UltimateIncurredClaimCost")
+        soak_obj.analyze(model_list=["featureless", "tree"], n_splits=5, n_random_seeds=5, log_target=True)
+        soak_obj.visualize(subset_value='M', model="tree", metric="rmse", figsize=(13, 2.5))
         """
+        if self.results_df is None:
+            raise ValueError("The dataset has not been analyzed yet, use the method analyze()")
         if subset_value == None:
             subset_value = np.unique(self.df[self.subset_col])[-1]
         if model == None:
@@ -208,18 +253,18 @@ class SOAK:
         def pval(cat1, cat2):
             x = df.loc[df["category"] == cat1, metric]
             y = df.loc[df["category"] == cat2, metric]
-            _, p = ttest_ind(x, y, equal_var=False)
+            _, p = ttest_rel(x, y)
             return p
 
         df = self.results_df[(self.results_df['subset'] == subset_value) &(self.results_df["model"] == model)].copy()
 
         cats = set(df["category"].unique())
-        sorted_cats_full = ["other", "same", "all"]
-        sorted_cats_ds = ["other", "same", "all-ds"]
+        sorted_cats_full = ["all", "same", "other"]
+        sorted_cats_ds = ["all-ds", "same", "other"]
         if "same-ds" in cats:
-            sorted_cats_ds = ["other", "same-ds", "all-ds"]
+            sorted_cats_ds = ["all-ds", "same-ds", "other"]
         if "other-ds" in cats:
-            sorted_cats_ds = ["other-ds", "same", "all-ds"]
+            sorted_cats_ds = ["all-ds", "same", "other-ds"]
         
         dfs = [None, None]
         for i, sorted_cats in enumerate([sorted_cats_full, sorted_cats_ds]):   
@@ -300,5 +345,5 @@ class SOAK:
 
         fig.supxlabel(f"{metric.upper()} (mean ± 2sd) | test subset: {subset_value} | model: {model} | {set(self.results_df['fold_id']).__len__()} test folds | {len(set(self.results_df['seed_id']))-1} downsample random seeds", fontsize=11)
         fig.tight_layout()
-        plt.close(fig)
+        fig.show()
         return fig
