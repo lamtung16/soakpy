@@ -5,24 +5,24 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FormatStrFormatter
 from sklearn.model_selection import StratifiedKFold
-from sklearn.linear_model import RidgeCV
+from sklearn.linear_model import LassoCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import GridSearchCV
 from sklearn.tree import DecisionTreeRegressor
 from scipy.stats import ttest_rel
 
-def split(subset_vec, n_splits=5, n_random_seeds=5, seed=123):
+def split(subset_vec, n_splits=5, n_random_seeds=2, seed=123):
     """
     Perform SOAK splitting.
 
     Parameters
     ----------
     subset_vec : array-like
-        Vector indicating subset/group membership.
+        Vector indicating subset values.
     n_splits : int, default=5
         Number of folds.
-    n_random_seeds: int, default=5
+    n_random_seeds: int, default=2
         Number of random seeds for downsampling
     seed : int, default=123
         Random seed for reproducibility.
@@ -63,7 +63,7 @@ def split(subset_vec, n_splits=5, n_random_seeds=5, seed=123):
         raise ValueError("n_splits cannot exceed number of samples")
     
     splits = []
-    kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    kf = StratifiedKFold(n_splits=int(n_splits), shuffle=True, random_state=int(seed))
     all_idx = np.arange(n)
     for fold_id, (fold_train_idx, fold_test_idx) in enumerate(kf.split(range(n), subset_vec)):
         for test_subset in np.unique(subset_vec):
@@ -89,7 +89,7 @@ def split(subset_vec, n_splits=5, n_random_seeds=5, seed=123):
             for category, train_idx in train_idx_dict.items():
                 if len(train_idx) > 0:
                     if "ds" in category:
-                        for random_seed in range(n_random_seeds):
+                        for random_seed in range(int(n_random_seeds)):
                             splits.append((test_subset, category, fold_id + 1, random_seed + 1, sorted(np.random.choice(np.intersect1d(fold_train_idx, train_idx), size=downsample_size, replace=False)), test_idx))
                     else:
                         splits.append((test_subset, category, fold_id + 1, 0, np.intersect1d(fold_train_idx, train_idx), test_idx))
@@ -113,7 +113,7 @@ def featureless_model(X_train, y_train, X_test, y_test):
 def linear_model(X_train, y_train, X_test, y_test):
     model = Pipeline([
         ('scaler', StandardScaler()),
-        ('ridge', RidgeCV(alphas=np.logspace(-2, 2, 20), cv=4))
+        ('ridge', LassoCV(alphas=np.logspace(-2, 2, 20), cv=min(4, len(y_train)), n_jobs=-1))
     ])
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
@@ -122,7 +122,7 @@ def linear_model(X_train, y_train, X_test, y_test):
 
 def treeCV_model(X_train, y_train, X_test, y_test):
     param_grid = {'max_depth': np.arange(2, 41, 2)}
-    grid_search = GridSearchCV(DecisionTreeRegressor(), param_grid, cv=4, scoring='neg_mean_squared_error', n_jobs=-1)
+    grid_search = GridSearchCV(DecisionTreeRegressor(), param_grid, cv=min(4, len(y_train)), scoring='neg_mean_squared_error', n_jobs=-1)
     grid_search.fit(X_train, y_train)
     y_pred = grid_search.best_estimator_.predict(X_test)
     return evaluate(y_pred, y_test)
@@ -162,8 +162,10 @@ class SOAK:
         self.subset_col = subset_col
         self.target_col = target_col
         self.results_df = None
+        if subset_col not in df.columns or target_col not in df.columns:
+            raise ValueError(f"{subset_col} or {target_col} not found in dataframe columns")
     
-    def analyze(self, model_list = ["tree"], n_splits=5, n_random_seeds=5, log_target=False, seed=123):
+    def analyze(self, model_list = ["tree"], n_splits=5, n_random_seeds=2, log_target=False, seed=123):
         """
         SOAK analyze, it updates the self.results_df
 
@@ -173,7 +175,7 @@ class SOAK:
             List of train models, subset of ["featureless", "linear", "tree"]
         n_splits : int, default=5
             Number of folds for each subset.
-        n_random_seeds: int, default=5
+        n_random_seeds: int, default=2
             Number of random seeds for downsampling
         log_target: boolean, default=False
             Transform target using log or not
@@ -190,8 +192,16 @@ class SOAK:
         soak_obj.analyze(model_list=["featureless", "tree"], n_splits=5, n_random_seeds=5, log_target=True)
 
         """
-        self.n_splits = n_splits
-        self.n_random_seeds = n_random_seeds
+
+        if not isinstance(model_list, list):
+            raise TypeError("`model_list` must be a list. For example, ['linear', 'tree']")
+        allowed_models = ["featureless", "linear", "tree"]
+        for model in model_list:
+            if model not in allowed_models:
+                raise ValueError(f"Invalid model(s) in `model_list`. Allowed values are: {sorted(allowed_models)}")
+        self.n_splits = int(n_splits)
+        self.n_random_seeds = int(n_random_seeds)
+        print(f"Analyzing the dataset with {self.n_splits} splits and {self.n_random_seeds} random seeds of downsampling ...")
         X = np.array(self.df.drop(columns=[self.subset_col, self.target_col]).select_dtypes(include=[np.number]))
         y = self.df[self.target_col]
         if log_target:
@@ -199,7 +209,9 @@ class SOAK:
         y = (y - np.mean(y)) / np.std(y)
         subset_vec = self.df[self.subset_col]
         results = []
-        for test_subset, category, fold_id, random_seed, train_idx, test_idx in split(subset_vec, n_splits, n_random_seeds, seed):
+        group_splits = split(subset_vec, n_splits, n_random_seeds, seed)
+        n_models = 0
+        for test_subset, category, fold_id, random_seed, train_idx, test_idx in group_splits:
             for model in model_list:
                 rmse, mae = self.model_eval(X[train_idx], y[train_idx], X[test_idx], y[test_idx], model)
                 results.append({
@@ -213,6 +225,8 @@ class SOAK:
                                 "rmse": rmse,
                                 "mae": mae,
                             })
+                n_models += 1
+                print(f"Done evaluating {n_models}/{len(model_list)*len(group_splits)} models", end="\r")
         self.results_df = pd.DataFrame(results)
         self.results_df = (
             self.results_df.groupby(["subset", "category", "fold_id", "model", "train_size", "test_size"], as_index=False)[["rmse", "mae"]]
@@ -249,12 +263,36 @@ class SOAK:
         soak_obj.analyze(model_list=["featureless", "tree"], n_splits=5, n_random_seeds=5, log_target=True)
         soak_obj.visualize(subset_value='M', model="tree", metric="rmse", figsize=(13, 2.5))
         """
+        metric = metric.lower()
+        if metric not in ["rmse", "mae"]:
+            metric = "rmse"
+            print(f"{metric} is not a valid metric, using rmse by default.")
         if self.results_df is None:
-            raise ValueError("The dataset has not been analyzed yet, use the method analyze()")
-        if subset_value == None:
-            subset_value = np.unique(self.df[self.subset_col])[-1]
+            if model in ["featureless", "linear", "tree"]:
+                self.analyze(model_list=[f"{model}"])
+            else:
+                print(f"Model '{model}' is not available, it has to be either 'featureless', 'linear' or 'tree', using 'tree' by default")
+                model = "tree"
+                self.analyze()
+
+        default_model = np.unique(self.results_df['model'])[-1]
+        default_subset = np.unique(self.df[self.subset_col])[-1]
         if model == None:
-            model = np.unique(self.results_df['model'])[-1]
+            model = default_model
+        elif model not in np.unique(self.results_df['model']):
+            if model in ["featureless", "linear", "tree"]:
+                old_results_df = self.results_df.copy(deep=True)
+                self.analyze(model_list=[f"{model}"])
+                self.results_df = pd.concat([self.results_df, old_results_df])
+            else:
+                print(f"Model {model} is not available, using {default_model} by default")
+                model = default_model
+
+        if subset_value == None:
+            subset_value = default_subset
+        elif subset_value not in np.unique(self.df[self.subset_col]):
+            print(f"There is no subset value {subset_value} in the dataset, evaluate value {default_subset} by default")
+            subset_value = default_subset
         
         def pval(cat1, cat2):
             x = df.loc[df["category"] == cat1, metric]

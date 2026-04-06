@@ -145,4 +145,5 @@ df = pd.read_csv("https://github.com/lamtung16/soak_regression/raw/refs/heads/ma
 soak_obj = soakpy.SOAK(df=df, subset_col="Gender", target_col="UltimateIncurredClaimCost")
 soak_obj.analyze(model_list=["featureless", "tree"], n_splits=2, n_random_seeds=2, log_target=True)
 soak_obj.visualize(subset_value='M', model="tree", metric="rmse", figsize=(12, 2.5))
+soak_obj.visualize(subset_value='F', model="featureless", metric="mae", figsize=(12, 2.5))
 ```
