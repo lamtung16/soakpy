@@ -113,15 +113,15 @@ def featureless_model(X_train, y_train, X_test, y_test):
 def linear_model(X_train, y_train, X_test, y_test):
     model = Pipeline([
         ('scaler', StandardScaler()),
-        ('ridge', LassoCV(alphas=np.logspace(-2, 2, 20), cv=min(4, len(y_train)), n_jobs=-1))
+        ('lasso', LassoCV(alphas=np.logspace(-2, 2, 10), cv=min(4, len(y_train)), n_jobs=-1))
     ])
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     return evaluate(y_pred, y_test)
 
 
-def treeCV_model(X_train, y_train, X_test, y_test):
-    param_grid = {'max_depth': np.arange(2, 41, 2)}
+def tree_model(X_train, y_train, X_test, y_test):
+    param_grid = {'max_depth': np.arange(1, 11, 1)}
     grid_search = GridSearchCV(DecisionTreeRegressor(), param_grid, cv=min(4, len(y_train)), scoring='neg_mean_squared_error', n_jobs=-1)
     grid_search.fit(X_train, y_train)
     y_pred = grid_search.best_estimator_.predict(X_test)
@@ -131,7 +131,7 @@ def treeCV_model(X_train, y_train, X_test, y_test):
 all_models = {
     "featureless": featureless_model,
     "linear": linear_model,
-    "tree": treeCV_model
+    "tree": tree_model
 }
 
 class SOAK:
@@ -176,9 +176,9 @@ class SOAK:
         n_splits : int, default=5
             Number of folds for each subset.
         n_random_seeds: int, default=2
-            Number of random seeds for downsampling
+            Number of random seeds for downsampling. 0 means no downsampling.
         log_target: boolean, default=False
-            Transform target using log or not
+            Transform target using log or not.
         seed : int, default=123
             Random seed for reproducibility.
         
@@ -205,7 +205,10 @@ class SOAK:
         X = np.array(self.df.drop(columns=[self.subset_col, self.target_col]).select_dtypes(include=[np.number]))
         y = self.df[self.target_col]
         if log_target:
-            y = np.log(y)
+            min_y = y.min()
+            if min_y < 0:
+                y = y + abs(min_y)
+            y = np.log1p(y)
         y = (y - np.mean(y)) / np.std(y)
         subset_vec = self.df[self.subset_col]
         results = []
@@ -238,7 +241,7 @@ class SOAK:
         return all_models[model](X_train, y_train, X_test, y_test)
 
 
-    def visualize(self, subset_value=None, model=None, metric="rmse", figsize=(15, 3)):
+    def visualize(self, subset_value=None, model=None, metric="rmse", figsize=(15, 3), fontsize=9):
         """
         SOAK visualize. Return a matplotlib figure.
 
@@ -252,6 +255,8 @@ class SOAK:
             Metric, it can be either 'rmse' or 'mae'
         figsize: tuple, default=(15, 3)
             Size of figure
+        fontsize: int, default=9
+            Font size of axes and title
         
         Example
         -------
@@ -363,10 +368,9 @@ class SOAK:
 
         fig, axes = plt.subplots(1, 2, figsize=figsize)
         for idx, ax in enumerate(axes):
-            df = dfs[idx]
-            category_order = df['category'].unique().tolist()
+            category_order = dfs[idx]['category'].unique().tolist()
             y_pos = {cat: i for i, cat in enumerate(category_order)}
-            for i, row in df.iterrows():
+            for i, row in dfs[idx].iterrows():
                 y = y_pos[row["category"]]
                 mean = row["mean"]
                 sd = row["std"]
@@ -374,20 +378,20 @@ class SOAK:
                 text = f"{mean:.5f} ± {sd:.5f}" if i % 2 == 0 else f"P = {row['p_value']:.4f}" if row['p_value'] > 0.0001 else "P < 0.0001"
                 marker_size = 4 if i % 2 == 0 else 0
                 ax.errorbar(mean, y, xerr=sd, fmt="o", color=color, markersize=marker_size)
-                ax.text(mean, y + 0.15, text, ha="center", va="bottom", fontsize=8)
+                ax.text(mean, y + 0.15, text, ha="center", va="bottom", fontsize=fontsize-1)
 
             # y-axis formatting
             ax.set_yticks([y_pos[c] for c in category_order])
-            ax.set_yticklabels(category_order, fontsize=9)
+            ax.set_yticklabels(category_order, fontsize=fontsize)
             ax.set_ylim(-0.5, len(category_order) - 0.2)
 
             # labels & title
-            ax.set_title("sample size: " + ("full" if idx==0 else f"{int(dfs[1]['train_size'].max())}"), fontsize=10)
+            ax.set_title("sample size: " + ("full" if idx==0 else f"{int(dfs[1]['train_size'].max())}"), fontsize=fontsize+1)
             ax.grid(alpha=0.5)
             ax.xaxis.set_major_formatter(FormatStrFormatter("%.3f"))
-            ax.tick_params(axis='x', labelsize=9)
+            ax.tick_params(axis='x', labelsize=fontsize)
 
-        fig.supxlabel(f"{metric.upper()} (mean ± 2sd) | test subset: {subset_value} | model: {model} | {self.n_splits} test folds | {self.n_random_seeds} downsample random seeds", fontsize=11)
+        fig.supxlabel(f"{metric.upper()} (mean ± sd) | test subset: {subset_value} | model: {model} | {self.n_splits} test folds | {self.n_random_seeds} downsample random seeds", fontsize=fontsize+2)
         fig.tight_layout()
         fig.show()
         return fig
